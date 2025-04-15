@@ -355,131 +355,144 @@ if df is not None:
 
         st.plotly_chart(fig, use_container_width=False)
 
+    import shutil  # For checking if pdftops is available
+
     # Export Options with improved styling
-    st.markdown("<h2 style='color: #8ab4f8; margin-top: 2rem;'>Export Options</h2>", unsafe_allow_html=True)
-    
-    export_container = st.container()
-    export_container.markdown(
-        f"""<div style="padding: 1rem; border-radius: 8px; border: 1px solid #333; background-color: #1a1a1a;">""", 
-        unsafe_allow_html=True
-    )
-    
-    with export_container:
-        try:
-            import kaleido
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.download_button("Download PNG", fig.to_image(format="png", scale=2), "raincloud_plot.png", "image/png")
-            with col2:
-                st.download_button("Download SVG", fig.to_image(format="svg"), "raincloud_plot.svg", "image/svg+xml")
-            with col3:
-                csv_export = df_melted.to_pandas().to_csv(index=False)
-                st.download_button("Download Data (CSV)", csv_export, "raincloud_data.csv", "text/csv")
-        except ImportError:
-            st.warning("Please install `kaleido` using `pip install -U kaleido` to enable image downloads.")
-        except Exception as e:
-            st.warning(f"Error generating image: {e}")
+    st.markdown("<h2 style='color: #ffffff; margin-top: 2rem;'>Export Options</h2>", unsafe_allow_html=True)
+
+    try:
+        import kaleido  # Ensure kaleido is installed for exporting images
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.download_button(
+                "Download PNG",
+                fig.to_image(format="png", width=2000, height=2000, scale=1),  # Increase resolution to 2000px
+                "raincloud_plot.png",
+                "image/png"
+            )
+        with col2:
+            st.download_button(
+                "Download SVG",
+                fig.to_image(format="svg"),
+                "raincloud_plot.svg",
+                "image/svg+xml"
+            )
+        with col3:
+            st.download_button(
+                "Download PDF",
+                fig.to_image(format="pdf"),
+                "raincloud_plot.pdf",
+                "application/pdf"
+            )
+        with col4:
+            # Check if pdftops is available for EPS export
+            if shutil.which("pdftops"):
+                st.download_button(
+                    "Download EPS",
+                    fig.to_image(format="eps"),
+                    "raincloud_plot.eps",
+                    "application/postscript"
+                )
+            else:
+                st.warning("EPS export requires the `pdftops` command from the Poppler library. Please install Poppler and ensure `pdftops` is available on your PATH.")
+        with col5:
+            csv_export = df_melted.to_pandas().to_csv(index=False)
+            st.download_button(
+                "Download Data (CSV)",
+                csv_export,
+                "raincloud_data.csv",
+                "text/csv"
+            )
+    except ImportError:
+        st.warning("Please install `kaleido` using `pip install -U kaleido` to enable image downloads.")
+    except Exception as e:
+        st.warning(f"Error generating image: {e}")
     
     # Statistical Summary with improved styling
-    st.markdown("<h2 style='color: #8ab4f8; margin-top: 2rem;'>Statistical Summary</h2>", unsafe_allow_html=True)
-    
-    stats_container = st.container()
-    stats_container.markdown(
-        f"""<div style="padding: 1rem; border-radius: 8px; border: 1px solid #333; background-color: #1a1a1a;">""", 
-        unsafe_allow_html=True
-    )
-    
-    with stats_container:
-        # Ensure the descriptive statistics DataFrame has the correct column names
-        descriptive_stats = df_pd.groupby("Group")["Value"].describe().reset_index()
-        descriptive_stats.rename(columns={
-            "count": "Count",
-            "mean": "Mean",
-            "std": "Std Dev",
-            "min": "Min",
-            "25%": "25th Percentile",
-            "50%": "Median",
-            "75%": "75th Percentile",
-            "max": "Max"
-        }, inplace=True)
+    st.markdown("<h2 style='color: #ffffff; margin-top: 2rem;'>Statistical Summary</h2>", unsafe_allow_html=True)
 
-        # Pairwise statistical tests between all groups
-        group_names = df_pd["Group"].unique()
-        ttest_results = []
-        normality_results = []
-        bayes_results = []
+    # Ensure the descriptive statistics DataFrame has the correct column names
+    descriptive_stats = df_pd.groupby("Group")["Value"].describe().reset_index()
+    descriptive_stats.rename(columns={
+        "count": "Count",
+        "mean": "Mean",
+        "std": "Std Dev",
+        "min": "Min",
+        "25%": "25th Percentile",
+        "50%": "Median",
+        "75%": "75th Percentile",
+        "max": "Max"
+    }, inplace=True)
 
-        for i in range(len(group_names)):
-            for j in range(i + 1, len(group_names)):
-                g1 = group_names[i]
-                g2 = group_names[j]
-                data1 = df_pd[df_pd["Group"] == g1]["Value"].dropna()
-                data2 = df_pd[df_pd["Group"] == g2]["Value"].dropna()
+    # Pairwise statistical tests between all groups
+    group_names = df_pd["Group"].unique()
+    ttest_results = []
+    normality_results = []
+    bayes_results = []
 
-                # Ensure the data is numeric
-                data1 = pd.to_numeric(data1, errors='coerce').dropna()
-                data2 = pd.to_numeric(data2, errors='coerce').dropna()
+    for i in range(len(group_names)):
+        for j in range(i + 1, len(group_names)):
+            g1 = group_names[i]
+            g2 = group_names[j]
+            data1 = df_pd[df_pd["Group"] == g1]["Value"].dropna()
+            data2 = df_pd[df_pd["Group"] == g2]["Value"].dropna()
 
-                # Check if data is valid
-                if len(data1) > 1 and len(data2) > 1:
-                    # Normality test (Shapiro)
-                    stat1, p1 = stats.shapiro(data1)
-                    stat2, p2 = stats.shapiro(data2)
-                    normality_results.append({
+            data1 = pd.to_numeric(data1, errors='coerce').dropna()
+            data2 = pd.to_numeric(data2, errors='coerce').dropna()
+
+            if len(data1) > 1 and len(data2) > 1:
+                stat1, p1 = stats.shapiro(data1)
+                stat2, p2 = stats.shapiro(data2)
+                normality_results.append({
+                    "Group 1": g1,
+                    "Group 2": g2,
+                    "Shapiro p (G1)": round(p1, 4),
+                    "Shapiro p (G2)": round(p2, 4)
+                })
+
+                if test_type == "Welch's T-Test":
+                    if data1.equals(data2):
+                        st.warning(f"Groups {g1} and {g2} are identical. Skipping statistical tests.")
+                        continue
+
+                    t_stat, t_p = stats.ttest_ind(data1, data2, equal_var=False)
+
+                    if np.isclose(t_p, 0):
+                        t_p = 1e-300
+
+                    ttest_results.append({
                         "Group 1": g1,
                         "Group 2": g2,
-                        "Shapiro p (G1)": round(p1, 4),
-                        "Shapiro p (G2)": round(p2, 4)
+                        "T-stat": round(t_stat, 4),
+                        "P-value": round(t_p, 4)
                     })
 
-                    # Perform the selected statistical test
-                    if test_type == "Welch's T-Test":
-                        # Check if groups are identical
-                        if data1.equals(data2):
-                            st.warning(f"Groups {g1} and {g2} are identical. Skipping statistical tests.")
-                            continue
+                    n1 = len(data1)
+                    n2 = len(data2)
+                    bayes = pg.bayesfactor_ttest(t_stat, nx=n1, ny=n2, alternative='two-sided')
+                    bayes_results.append({
+                        "Group 1": g1,
+                        "Group 2": g2,
+                        "Bayes Factor": round(bayes, 4)
+                    })
+                elif test_type == "Mann-Whitney U Test":
+                    u_stat, u_p = stats.mannwhitneyu(data1, data2, alternative='two-sided')
+                    ttest_results.append({
+                        "Group 1": g1,
+                        "Group 2": g2,
+                        "U-stat": round(u_stat, 4),
+                        "P-value": round(u_p, 4)
+                    })
 
-                        # Perform Welch's t-test
-                        t_stat, t_p = stats.ttest_ind(data1, data2, equal_var=False)
+    st.markdown("<h3 style='color: #ffffff;'>Descriptive Statistics</h3>", unsafe_allow_html=True)
+    st.dataframe(descriptive_stats)
 
-                        # Handle numerical precision issues
-                        if np.isclose(t_p, 0):
-                            t_p = 1e-300  # Set a very small p-value instead of 0
+    st.markdown("<h3 style='color: #ffffff;'>Normality Test Results (Shapiro-Wilk)</h3>", unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(normality_results))
 
-                        ttest_results.append({
-                            "Group 1": g1,
-                            "Group 2": g2,
-                            "T-stat": round(t_stat, 4),
-                            "P-value": round(t_p, 4)
-                        })
+    st.markdown(f"<h3 style='color: #ffffff;'>{test_type} Results</h3>", unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(ttest_results))
 
-                        # Bayesian t-test (using pingouin)
-                        n1 = len(data1)
-                        n2 = len(data2)
-                        bayes = pg.bayesfactor_ttest(t_stat, nx=n1, ny=n2, alternative='two-sided')
-                        bayes_results.append({
-                            "Group 1": g1,
-                            "Group 2": g2,
-                            "Bayes Factor": round(bayes, 4)
-                        })
-                    elif test_type == "Mann-Whitney U Test":
-                        u_stat, u_p = stats.mannwhitneyu(data1, data2, alternative='two-sided')
-                        ttest_results.append({
-                            "Group 1": g1,
-                            "Group 2": g2,
-                            "U-stat": round(u_stat, 4),
-                            "P-value": round(u_p, 4)
-                        })
-
-        st.markdown("<h3 style='color: #8ab4f8;'>Descriptive Statistics</h3>", unsafe_allow_html=True)
-        st.dataframe(descriptive_stats)
-
-        st.markdown("<h3 style='color: #8ab4f8;'>Normality Test Results (Shapiro-Wilk)</h3>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(normality_results))
-
-        st.markdown(f"<h3 style='color: #8ab4f8;'>{test_type} Results</h3>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(ttest_results))
-
-        if test_type == "Welch's T-Test":
-            st.markdown("<h3 style='color: #8ab4f8;'>Bayesian T-Test Results</h3>", unsafe_allow_html=True)
-            st.dataframe(pd.DataFrame(bayes_results))
+    if test_type == "Welch's T-Test":
+        st.markdown("<h3 style='color: #ffffff;'>Bayesian T-Test Results</h3>", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame(bayes_results))
