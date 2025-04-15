@@ -2,8 +2,7 @@ import streamlit as st
 import polars as pl
 import plotly.graph_objects as go
 import numpy as np
-import pandas as pd
-from scipy import stats
+# Requires: pip install pingouin
 import pingouin as pg
 
 # Helper function to load and process data
@@ -14,6 +13,7 @@ def load_data(file):
             if name.endswith(".csv"):
                 return pl.read_csv(file)
             elif name.endswith((".xlsx", ".xls")):
+                # Requires: pip install fastexcel
                 return pl.read_excel(file)
             else:
                 st.error("Unsupported file type. Please upload a CSV or Excel file.")
@@ -23,7 +23,12 @@ def load_data(file):
 
 # Helper function to get numeric data for a group
 def get_numeric_data(df, group):
-    return pd.to_numeric(df[df["Group"] == group]["Value"], errors='coerce').dropna()
+    try:
+        data = df.filter(pl.col("Group") == group).select("Value").to_series()
+        return data.drop_nulls().to_numpy()
+    except Exception as e:
+        st.warning(f"Error extracting numeric data for {group}: {e}")
+        return np.array([])
 
 # Helper function to perform statistical tests
 def perform_statistical_test(data1, data2, test_type, g1, g2):
@@ -44,62 +49,6 @@ def perform_statistical_test(data1, data2, test_type, g1, g2):
     except Exception as e:
         st.warning(f"Error performing {test_type} for {g1} vs {g2}: {e}")
         return None
-
-# Helper function to plot prior and posterior distributions
-def plot_prior_posterior_plotly(prior_mean, prior_std, posterior_mean, posterior_std, group1, group2):
-    x = np.linspace(
-        min(prior_mean - 3 * prior_std, posterior_mean - 3 * posterior_std),
-        max(prior_mean + 3 * prior_std, posterior_mean + 3 * posterior_std),
-        500
-    )
-    
-    # Calculate prior and posterior distributions
-    prior = stats.norm.pdf(x, loc=prior_mean, scale=prior_std)
-    posterior = stats.norm.pdf(x, loc=posterior_mean, scale=posterior_std)
-    
-    # Create the plot
-    fig = go.Figure()
-    
-    # Add prior distribution
-    fig.add_trace(go.Scatter(
-        x=x, y=prior,
-        mode='lines',
-        name='Prior',
-        line=dict(color='blue', width=2)
-    ))
-    
-    # Add posterior distribution
-    fig.add_trace(go.Scatter(
-        x=x, y=posterior,
-        mode='lines',
-        name='Posterior',
-        line=dict(color='orange', width=2)
-    ))
-    
-    # Update layout with white background and black fonts
-    fig.update_layout(
-        title=f"Prior and Posterior Distributions<br>{group1} vs {group2}",
-        xaxis_title="Effect Size",
-        yaxis_title="Density",
-        template="simple_white",
-        plot_bgcolor="white",  # Set plot background to white
-        paper_bgcolor="white",  # Set paper background to white
-        font=dict(color="black"),  # Set font color to black
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        )
-    )
-    
-    # Display the plot in Streamlit
-    st.plotly_chart(fig, use_container_width=True)
-
-# Helper function to style headers
-def styled_header(text):
-    st.markdown(f"<h3 style='color: #ffffff;'>{text}</h3>", unsafe_allow_html=True)
 
 # Define the configure_plot_layout function at the top
 def configure_plot_layout(fig, fig_title, x_axis_label, y_axis_label, group_positions, group_labels, plot_width, plot_height, background_color, grid_color, y_min=None, y_max=None):
@@ -297,15 +246,6 @@ with st.sidebar.expander("Colors", expanded=False):
 
 st.sidebar.markdown("<hr>", unsafe_allow_html=True)
 
-# Statistical Test Settings Section
-with st.sidebar.expander("Statistical Test Settings", expanded=False):
-    test_type = st.selectbox(
-        "Select Statistical Test",
-        ["Welch's T-Test", "Mann-Whitney U Test"],
-        index=0,
-        key="test_type"
-    )
-
 # Y-Axis Scale Settings
 with st.sidebar.expander("Y-Axis Scale Settings", expanded=False):
     y_min = st.number_input("Y-Axis Minimum", value=None, step=1.0, format="%.2f", key="y_min")
@@ -314,50 +254,8 @@ with st.sidebar.expander("Y-Axis Scale Settings", expanded=False):
 # Main content area
 st.markdown("<h1 style='text-align: center; color: #8ab4f8;'>Raincloud Plot Generator</h1>", unsafe_allow_html=True)
 
-# Create tabs with improved styling
-tabs = st.tabs(["Upload Data", "Help & Instructions"])
-
-with tabs[0]:
-    st.markdown("<p style='font-size: 1.1rem;'>Upload your data file to generate a raincloud plot.</p>", unsafe_allow_html=True)
-    uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=SUPPORTED_FILE_TYPES)
-
-with tabs[1]:
-    st.markdown("""
-    <div style='background-color: #1e1e1e; padding: 1.5rem; border-radius: 8px; border: 1px solid #333;'>
-        <h3 style='color: #8ab4f8; margin-top: 0;'>Getting Started</h3>
-        <ol style='font-size: 1.1rem;'>
-            <li><strong>Upload Data:</strong> Select a CSV or Excel file containing your data.</li>
-            <li><strong>Configure Plot:</strong> Use the sidebar to customize the appearance of your raincloud plot.</li>
-            <li><strong>Export Results:</strong> Download your plot as PNG, SVG, or PDF, along with statistical summaries.</li>
-        </ol>
-        
-        <h3 style='color: #8ab4f8;'>Data Format</h3>
-        <p style='font-size: 1.1rem;'>Your data should be organized with each column representing a group to be plotted. The column headers will be used as group labels.</p>
-        <p style='font-size: 1.1rem;'>For example:</p>
-        <pre style='background-color: #2e2e2e; color: #e0e0e0; padding: 1rem; border-radius: 8px;'>
-Group A, Group B, Group C
-1.2, 2.3, 3.1
-1.5, 2.1, 3.3
-1.8, 2.4, 3.0
-        </pre>
-        
-        <h3 style='color: #8ab4f8;'>Statistical Tests</h3>
-        <p style='font-size: 1.1rem;'>This tool provides two statistical test options:</p>
-        <ul style='font-size: 1.1rem;'>
-            <li><strong>Welch's T-Test:</strong> For comparing means when variances may differ.</li>
-            <li><strong>Mann-Whitney U Test:</strong> Non-parametric test for comparing distributions.</li>
-        </ul>
-        
-        <h3 style='color: #8ab4f8;'>Export Options</h3>
-        <p style='font-size: 1.1rem;'>You can export your plot in the following formats:</p>
-        <ul style='font-size: 1.1rem;'>
-            <li><strong>PNG:</strong> High-resolution image with customizable scale and transparent background.</li>
-            <li><strong>SVG:</strong> Scalable vector graphic for use in design tools.</li>
-            <li><strong>PDF:</strong> High-quality document format for printing or sharing.</li>
-            <li><strong>CSV:</strong> Export the raw data used for the plot.</li>
-        </ul>
-    </div>
-    """, unsafe_allow_html=True)
+st.markdown("<p style='font-size: 1.1rem;'>Upload your data file to generate a raincloud plot.</p>", unsafe_allow_html=True)
+uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=SUPPORTED_FILE_TYPES)
 
 # Load and process data if file is uploaded
 df = load_data(uploaded_file)
@@ -379,7 +277,6 @@ if df is not None:
     for i, group in enumerate(df_pd["Group"].unique()):
         y = df_pd[df_pd["Group"] == group]["Value"]
         x_base = group_positions[i]
-        group_color = group_colors[group]
 
         if violin_on:
             # Determine the direction of the violin
@@ -404,7 +301,7 @@ if df is not None:
                 y=y,
                 x=[x_base + violin_box_gap] * len(y),
                 name=group,
-                line=dict(color="#000000", width=box_line_width),  # Set outline color to black
+                line=dict(color="#000000", width=box_line_width),  # Outline color to black
                 fillcolor=box_color,
                 boxpoints=False,
                 opacity=box_opacity,
@@ -416,7 +313,6 @@ if df is not None:
             # Ensure dots face the opposite direction of the violin
             jitter_direction = 1 if side == "negative" else -1
             jitter = point_jitter * (np.random.rand(len(y)) - 0.5)
-            points_fill_color = selected_palette[(i + 2) % len(selected_palette)]
 
             fig.add_trace(go.Scatter(
                 y=y,
@@ -425,32 +321,28 @@ if df is not None:
                 marker=dict(
                     size=point_size,
                     opacity=point_opacity,
-                    color=points_fill_color,
+                    color=group_colors[group],  # Using group_colors for marker color
                     line=dict(color=points_outline_color, width=point_outline_width)
                 ),
                 name=group,
                 showlegend=False
             ))
 
-    fig_width_px = plot_width
-    fig_height_px = plot_height
-
-    configure_plot_layout(fig, fig_title, x_axis_label, y_axis_label, group_positions, list(df_pd["Group"].unique()), fig_width_px, fig_height_px, background_color, grid_color, y_min, y_max)
+    configure_plot_layout(fig, fig_title, x_axis_label, y_axis_label, group_positions, list(df_pd["Group"].unique()), plot_width, plot_height, background_color, grid_color, y_min, y_max)
 
     st.plotly_chart(fig, use_container_width=False)
-
-    import shutil  # For checking if pdftops is available
 
     # Export Options with Simplified PNG Settings
     st.markdown("<h2 style='color: #ffffff; margin-top: 2rem;'>Export Options</h2>", unsafe_allow_html=True)
 
     try:
+        # Requires: pip install kaleido
         import kaleido  # Ensure kaleido is installed for exporting images
         col1, col2, col3, col4 = st.columns(4)  # Adjust columns to 4 for export options
 
         # Allow users to customize PNG export scale and background
         st.markdown("<h4 style='color: #8ab4f8;'>Customize PNG Export</h4>", unsafe_allow_html=True)
-        export_scale = st.slider("Export Scale", min_value=1, max_value=5, value=2, step=1)
+        export_scale = st.slider("Export Scale", min_value=1, max_value=10, value=2, step=1)
         st.markdown(
             "<p style='font-size: 0.9rem; color: #e0e0e0;'>"
             "The export scale multiplies the resolution of the exported image. For example, "
@@ -488,14 +380,17 @@ if df is not None:
                 "raincloud_plot.pdf",
                 "application/pdf"
             )
-        with col4:
-            csv_export = df_melted.to_pandas().to_csv(index=False)  # Export data as CSV
-            st.download_button(
-                "Download Data (CSV)",
-                csv_export,
-                "raincloud_data.csv",
-                "text/csv"
-            )
+        try:
+            with col4:
+                csv_export = df_melted.to_pandas().to_csv(index=False)
+                st.download_button(
+                    "Download Data (CSV)",
+                    csv_export,
+                    "raincloud_data.csv",
+                    "text/csv"
+                )
+        except Exception as e:
+            st.warning(f"Error generating CSV: {e}")
     except ImportError:
         st.warning("Please install `kaleido` using `pip install -U kaleido` to enable image downloads.")
     except Exception as e:
