@@ -2,21 +2,112 @@ import streamlit as st
 import polars as pl
 import plotly.graph_objects as go
 import numpy as np
-import io
 import pandas as pd
 from scipy import stats
 import pingouin as pg
 
+# Helper function to load and process data
+def load_data(file):
+    if file:
+        try:
+            name = file.name.lower()
+            if name.endswith(".csv"):
+                return pl.read_csv(file)
+            elif name.endswith((".xlsx", ".xls")):
+                return pl.read_excel(file)
+            else:
+                st.error("Unsupported file type. Please upload a CSV or Excel file.")
+        except Exception as e:
+            st.error(f"Error reading file: {e}")
+    return None
+
+# Helper function to get numeric data for a group
+def get_numeric_data(df, group):
+    return pd.to_numeric(df[df["Group"] == group]["Value"], errors='coerce').dropna()
+
+# Helper function to perform statistical tests
+def perform_statistical_test(data1, data2, test_type, g1, g2):
+    try:
+        if test_type == "Welch's T-Test":
+            ttest = pg.ttest(data1, data2, paired=False, alternative="two-sided")
+            return {
+                "T-stat": round(ttest['T'].values[0], 4),
+                "P-value": round(ttest['p-val'].values[0], 4),
+                "Cohen's d": round(ttest['cohen-d'].values[0], 4)
+            }
+        elif test_type == "Mann-Whitney U Test":
+            mannwhitney = pg.mwu(data1, data2, alternative="two-sided")
+            return {
+                "U-stat": round(mannwhitney['U-val'].values[0], 4),
+                "P-value": round(mannwhitney['p-val'].values[0], 4)
+            }
+    except Exception as e:
+        st.warning(f"Error performing {test_type} for {g1} vs {g2}: {e}")
+        return None
+
+# Helper function to plot prior and posterior distributions
+def plot_prior_posterior_plotly(prior_mean, prior_std, posterior_mean, posterior_std, group1, group2):
+    x = np.linspace(
+        min(prior_mean - 3 * prior_std, posterior_mean - 3 * posterior_std),
+        max(prior_mean + 3 * prior_std, posterior_mean + 3 * posterior_std),
+        500
+    )
+    
+    # Calculate prior and posterior distributions
+    prior = stats.norm.pdf(x, loc=prior_mean, scale=prior_std)
+    posterior = stats.norm.pdf(x, loc=posterior_mean, scale=posterior_std)
+    
+    # Create the plot
+    fig = go.Figure()
+    
+    # Add prior distribution
+    fig.add_trace(go.Scatter(
+        x=x, y=prior,
+        mode='lines',
+        name='Prior',
+        line=dict(color='blue', width=2)
+    ))
+    
+    # Add posterior distribution
+    fig.add_trace(go.Scatter(
+        x=x, y=posterior,
+        mode='lines',
+        name='Posterior',
+        line=dict(color='orange', width=2)
+    ))
+    
+    # Update layout with white background and black fonts
+    fig.update_layout(
+        title=f"Prior and Posterior Distributions<br>{group1} vs {group2}",
+        xaxis_title="Effect Size",
+        yaxis_title="Density",
+        template="simple_white",
+        plot_bgcolor="white",  # Set plot background to white
+        paper_bgcolor="white",  # Set paper background to white
+        font=dict(color="black"),  # Set font color to black
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+    
+    # Display the plot in Streamlit
+    st.plotly_chart(fig, use_container_width=True)
+
+# Helper function to style headers
+def styled_header(text):
+    st.markdown(f"<h3 style='color: #ffffff;'>{text}</h3>", unsafe_allow_html=True)
+
 # Define the configure_plot_layout function at the top
 def configure_plot_layout(fig, fig_title, x_axis_label, y_axis_label, group_positions, group_labels, plot_width, plot_height, background_color, grid_color, y_min=None, y_max=None):
     fig.update_layout(
-        title=dict(
-            text=fig_title,
-            font=dict(size=20, family="Arial, sans-serif", color="black"),
-            x=0.5,  # Center the title horizontally
-            xanchor="center",  # Ensure the title is anchored to the center
-            yanchor="top"  # Anchor the title to the top
-        ),
+        title_text=fig_title,
+        title_font_size=20,
+        title_font_family="Arial",
+        title_x=0.5,  # Center the title horizontally
         xaxis=dict(
             title=dict(text=x_axis_label, font=dict(size=14, family="Arial, sans-serif", color="black")),
             tickmode='array',
@@ -53,8 +144,7 @@ COLOR_PALETTES = {
 st.set_page_config(
     page_title="Raincloud Plot Generator",
     layout="wide",
-    initial_sidebar_state="expanded",
-    page_icon="🌧️"
+    initial_sidebar_state="expanded"
 )
 
 # Apply custom CSS for a dark mode theme
@@ -238,34 +328,36 @@ with tabs[1]:
         <ol style='font-size: 1.1rem;'>
             <li><strong>Upload Data:</strong> Select a CSV or Excel file containing your data.</li>
             <li><strong>Configure Plot:</strong> Use the sidebar to customize the appearance of your raincloud plot.</li>
-            <li><strong>Export Results:</strong> Download your plot as PNG or SVG, along with statistical summaries.</li>
+            <li><strong>Export Results:</strong> Download your plot as PNG, SVG, or PDF, along with statistical summaries.</li>
         </ol>
         
         <h3 style='color: #8ab4f8;'>Data Format</h3>
         <p style='font-size: 1.1rem;'>Your data should be organized with each column representing a group to be plotted. The column headers will be used as group labels.</p>
+        <p style='font-size: 1.1rem;'>For example:</p>
+        <pre style='background-color: #2e2e2e; color: #e0e0e0; padding: 1rem; border-radius: 8px;'>
+Group A, Group B, Group C
+1.2, 2.3, 3.1
+1.5, 2.1, 3.3
+1.8, 2.4, 3.0
+        </pre>
         
         <h3 style='color: #8ab4f8;'>Statistical Tests</h3>
         <p style='font-size: 1.1rem;'>This tool provides two statistical test options:</p>
         <ul style='font-size: 1.1rem;'>
-            <li><strong>Welch's T-Test:</strong> For comparing means when variances may differ</li>
-            <li><strong>Mann-Whitney U Test:</strong> Non-parametric test for comparing distributions</li>
+            <li><strong>Welch's T-Test:</strong> For comparing means when variances may differ.</li>
+            <li><strong>Mann-Whitney U Test:</strong> Non-parametric test for comparing distributions.</li>
+        </ul>
+        
+        <h3 style='color: #8ab4f8;'>Export Options</h3>
+        <p style='font-size: 1.1rem;'>You can export your plot in the following formats:</p>
+        <ul style='font-size: 1.1rem;'>
+            <li><strong>PNG:</strong> High-resolution image with customizable scale and transparent background.</li>
+            <li><strong>SVG:</strong> Scalable vector graphic for use in design tools.</li>
+            <li><strong>PDF:</strong> High-quality document format for printing or sharing.</li>
+            <li><strong>CSV:</strong> Export the raw data used for the plot.</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
-
-def load_data(file):
-    if file:
-        try:
-            name = file.name.lower()
-            if name.endswith(".csv"):
-                return pl.read_csv(file)
-            elif name.endswith((".xlsx", ".xls")):
-                return pl.read_excel(file)
-            else:
-                st.error("Unsupported file type. Please upload a CSV or Excel file.")
-        except Exception as e:
-            st.error(f"Error reading file: {e}")
-    return None
 
 # Load and process data if file is uploaded
 df = load_data(uploaded_file)
@@ -280,112 +372,124 @@ if df is not None:
     
     st.markdown("<h2 style='color: #8ab4f8; margin-top: 2rem;'>Raincloud Plot</h2>", unsafe_allow_html=True)
     
-    # Create plot container with border
-    plot_container = st.container()
-    plot_container.markdown(
-        f"""<div style="padding: 1rem; border-radius: 8px; border: 1px solid #333; background-color: #1a1a1a;">""", 
-        unsafe_allow_html=True
-    )
-    
-    with plot_container:
-        fig = go.Figure()
+    fig = go.Figure()
 
-        group_positions = [i * group_spacing for i in range(len(df_pd["Group"].unique()))]
+    group_positions = [i * group_spacing for i in range(len(df_pd["Group"].unique()))]
 
-        for i, group in enumerate(df_pd["Group"].unique()):
-            y = df_pd[df_pd["Group"] == group]["Value"]
-            x_base = group_positions[i]
-            group_color = group_colors[group]
+    for i, group in enumerate(df_pd["Group"].unique()):
+        y = df_pd[df_pd["Group"] == group]["Value"]
+        x_base = group_positions[i]
+        group_color = group_colors[group]
 
-            if violin_on:
-                # Determine the direction of the violin
-                side = "negative" if violin_direction == "Left" else "positive"
-                violin_fill_color = selected_palette[i % len(selected_palette)]
+        if violin_on:
+            # Determine the direction of the violin
+            side = "negative" if violin_direction == "Left" else "positive"
+            violin_fill_color = selected_palette[i % len(selected_palette)]
 
-                fig.add_trace(go.Violin(
-                    y=y,
-                    x=[x_base] * len(y),
-                    name=group,
-                    side=side,
-                    width=violin_width,
-                    opacity=violin_opacity,
-                    line=dict(width=violin_line_width, color=violin_outline_color),
-                    fillcolor=violin_fill_color,
-                    meanline_visible=False,
-                    showlegend=False
-                ))
+            fig.add_trace(go.Violin(
+                y=y,
+                x=[x_base] * len(y),
+                name=group,
+                side=side,
+                width=violin_width,
+                opacity=violin_opacity,
+                line=dict(width=violin_line_width, color=violin_outline_color),
+                fillcolor=violin_fill_color,
+                meanline_visible=False,
+                showlegend=False
+            ))
 
-            if box_on:
-                fig.add_trace(go.Box(
-                    y=y,
-                    x=[x_base + violin_box_gap] * len(y),
-                    name=group,
-                    line=dict(color="#000000", width=box_line_width),  # Set outline color to black
-                    fillcolor=box_color,
-                    boxpoints=False,
-                    opacity=box_opacity,
-                    width=box_width,
-                    showlegend=False
-                ))
+        if box_on:
+            fig.add_trace(go.Box(
+                y=y,
+                x=[x_base + violin_box_gap] * len(y),
+                name=group,
+                line=dict(color="#000000", width=box_line_width),  # Set outline color to black
+                fillcolor=box_color,
+                boxpoints=False,
+                opacity=box_opacity,
+                width=box_width,
+                showlegend=False
+            ))
 
-            if points_on:
-                # Ensure dots face the opposite direction of the violin
-                jitter_direction = 1 if side == "negative" else -1
-                jitter = point_jitter * (np.random.rand(len(y)) - 0.5)
-                points_fill_color = selected_palette[(i + 2) % len(selected_palette)]
+        if points_on:
+            # Ensure dots face the opposite direction of the violin
+            jitter_direction = 1 if side == "negative" else -1
+            jitter = point_jitter * (np.random.rand(len(y)) - 0.5)
+            points_fill_color = selected_palette[(i + 2) % len(selected_palette)]
 
-                fig.add_trace(go.Scatter(
-                    y=y,
-                    x=x_base + violin_box_gap + (box_points_gap * jitter_direction) + jitter,
-                    mode="markers",
-                    marker=dict(
-                        size=point_size,
-                        opacity=point_opacity,
-                        color=points_fill_color,
-                        line=dict(color=points_outline_color, width=point_outline_width)
-                    ),
-                    name=group,
-                    showlegend=False
-                ))
+            fig.add_trace(go.Scatter(
+                y=y,
+                x=x_base + violin_box_gap + (box_points_gap * jitter_direction) + jitter,
+                mode="markers",
+                marker=dict(
+                    size=point_size,
+                    opacity=point_opacity,
+                    color=points_fill_color,
+                    line=dict(color=points_outline_color, width=point_outline_width)
+                ),
+                name=group,
+                showlegend=False
+            ))
 
-        fig_width_px = plot_width
-        fig_height_px = plot_height
+    fig_width_px = plot_width
+    fig_height_px = plot_height
 
-        configure_plot_layout(fig, fig_title, x_axis_label, y_axis_label, group_positions, list(df_pd["Group"].unique()), fig_width_px, fig_height_px, background_color, grid_color, y_min, y_max)
+    configure_plot_layout(fig, fig_title, x_axis_label, y_axis_label, group_positions, list(df_pd["Group"].unique()), fig_width_px, fig_height_px, background_color, grid_color, y_min, y_max)
 
-        st.plotly_chart(fig, use_container_width=False)
+    st.plotly_chart(fig, use_container_width=False)
 
     import shutil  # For checking if pdftops is available
 
-    # Export Options with improved styling
+    # Export Options with Simplified PNG Settings
     st.markdown("<h2 style='color: #ffffff; margin-top: 2rem;'>Export Options</h2>", unsafe_allow_html=True)
 
     try:
         import kaleido  # Ensure kaleido is installed for exporting images
-        col1, col2, col3, col4 = st.columns(4)  # Adjust columns to 4 since EPS is removed
+        col1, col2, col3, col4 = st.columns(4)  # Adjust columns to 4 for export options
+
+        # Allow users to customize PNG export scale and background
+        st.markdown("<h4 style='color: #8ab4f8;'>Customize PNG Export</h4>", unsafe_allow_html=True)
+        export_scale = st.slider("Export Scale", min_value=1, max_value=5, value=2, step=1)
+        st.markdown(
+            "<p style='font-size: 0.9rem; color: #e0e0e0;'>"
+            "The export scale multiplies the resolution of the exported image. For example, "
+            "a scale of 2 doubles the resolution, making the image sharper and suitable for high-quality outputs like presentations or printing."
+            "</p>",
+            unsafe_allow_html=True
+        )
+        transparent_background = st.checkbox("Transparent Background", value=True)
+
+        # Update layout explicitly before exporting
+        fig.update_layout(
+            plot_bgcolor="rgba(0,0,0,0)" if transparent_background else background_color,  # Transparent or custom background
+            paper_bgcolor="rgba(0,0,0,0)" if transparent_background else background_color,  # Transparent or custom background
+            font=dict(color="black")  # Ensure font color matches
+        )
+
         with col1:
             st.download_button(
                 "Download PNG",
-                fig.to_image(format="png", width=2000, height=2000, scale=1),  # Increase resolution to 2000px
+                fig.to_image(format="png", scale=export_scale),  # Use scale for resolution
                 "raincloud_plot.png",
                 "image/png"
             )
         with col2:
             st.download_button(
                 "Download SVG",
-                fig.to_image(format="svg"),
+                fig.to_image(format="svg"),  # SVG format
                 "raincloud_plot.svg",
                 "image/svg+xml"
             )
         with col3:
             st.download_button(
                 "Download PDF",
-                fig.to_image(format="pdf"),
+                fig.to_image(format="pdf"),  # PDF format
                 "raincloud_plot.pdf",
                 "application/pdf"
             )
         with col4:
-            csv_export = df_melted.to_pandas().to_csv(index=False)
+            csv_export = df_melted.to_pandas().to_csv(index=False)  # Export data as CSV
             st.download_button(
                 "Download Data (CSV)",
                 csv_export,
@@ -396,14 +500,12 @@ if df is not None:
         st.warning("Please install `kaleido` using `pip install -U kaleido` to enable image downloads.")
     except Exception as e:
         st.warning(f"Error generating image: {e}")
-    
-    # Statistical Summary with improved styling
-    st.markdown("<h2 style='color: #ffffff; margin-top: 2rem;'>Statistical Summary</h2>", unsafe_allow_html=True)
 
-    # Descriptive Statistics
+    # Add Statistics Summary Section
+    st.markdown("<h2 style='color: #ffffff; margin-top: 2rem;'>Statistics Summary</h2>", unsafe_allow_html=True)
+
+    # Calculate descriptive statistics for each group
     descriptive_stats = df_pd.groupby("Group")["Value"].describe().reset_index()
-
-    # Rename columns for better readability
     descriptive_stats.rename(columns={
         "count": "Count",
         "mean": "Mean",
@@ -415,81 +517,5 @@ if df is not None:
         "max": "Max"
     }, inplace=True)
 
-    # Define group names
-    group_names = df_pd["Group"].unique()
-
-    # Normality Tests
-    normality_results = []
-    for group in group_names:
-        data = df_pd[df_pd["Group"] == group]["Value"].dropna()
-        shapiro_p = stats.shapiro(data).pvalue
-        ad_p = stats.anderson(data).critical_values[2]  # Anderson-Darling
-        normality_results.append({
-            "Group": group,
-            "Shapiro-Wilk p": round(shapiro_p, 4),
-            "Anderson-Darling p (approx)": round(ad_p, 4)
-        })
-    normality_results = pd.DataFrame(normality_results)
-
-    # Pairwise Statistical Tests
-    ttest_results = []
-    bayes_results = []
-
-    for i in range(len(group_names)):
-        for j in range(i + 1, len(group_names)):
-            g1 = group_names[i]
-            g2 = group_names[j]
-            data1 = df_pd[df_pd["Group"] == g1]["Value"].dropna()
-            data2 = df_pd[df_pd["Group"] == g2]["Value"].dropna()
-
-            if len(data1) > 1 and len(data2) > 1:
-                if test_type == "Welch's T-Test":
-                    # Perform Welch's T-Test
-                    ttest = pg.ttest(data1, data2, paired=False, alternative="two-sided")
-                    t_stat = ttest['T'].values[0]
-                    p_value = ttest['p-val'].values[0]
-                    cohen_d = ttest['cohen-d'].values[0]
-
-                    ttest_results.append({
-                        "Group 1": g1,
-                        "Group 2": g2,
-                        "T-stat": round(t_stat, 4),
-                        "P-value": round(p_value, 4),
-                        "Cohen's d": round(cohen_d, 4)
-                    })
-
-                    # Perform Bayesian T-Test
-                    n1 = len(data1)
-                    n2 = len(data2)
-                    bayes_factor = pg.bayesfactor_ttest(t_stat, nx=n1, ny=n2, alternative="two-sided")
-                    bayes_results.append({
-                        "Group 1": g1,
-                        "Group 2": g2,
-                        "Bayes Factor": round(bayes_factor, 4)
-                    })
-                elif test_type == "Mann-Whitney U Test":
-                    # Perform Mann-Whitney U Test
-                    mannwhitney = pg.mwu(data1, data2, alternative="two-sided")
-                    u_stat = mannwhitney['U-val'].values[0]
-                    p_value = mannwhitney['p-val'].values[0]
-
-                    ttest_results.append({
-                        "Group 1": g1,
-                        "Group 2": g2,
-                        "U-stat": round(u_stat, 4),
-                        "P-value": round(p_value, 4)
-                    })
-
-    # Display Results
-    st.markdown("<h3 style='color: #ffffff;'>Descriptive Statistics</h3>", unsafe_allow_html=True)
+    # Display the descriptive statistics as a table
     st.dataframe(descriptive_stats)
-
-    st.markdown("<h3 style='color: #ffffff;'>Normality Test Results</h3>", unsafe_allow_html=True)
-    st.dataframe(normality_results)
-
-    st.markdown(f"<h3 style='color: #ffffff;'>{test_type} Results</h3>", unsafe_allow_html=True)
-    st.dataframe(pd.DataFrame(ttest_results))
-
-    if test_type == "Welch's T-Test":
-        st.markdown("<h3 style='color: #ffffff;'>Bayesian T-Test Results</h3>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(bayes_results))
